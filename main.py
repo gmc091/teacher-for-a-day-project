@@ -1,6 +1,7 @@
 # Import necessary modules
 import tkinter as tk  # Used to create GUI
 from tkinter import ttk
+from ttkthemes import ThemedTk
 from tkinter import font
 import openai  # Used to access the OpenAI API
 import pyttsx3  # Used to convert text to speech
@@ -9,6 +10,7 @@ import language_tool_python  # Used for grammar and spelling correction (Not use
 import threading  # Used to run multiple threads
 import queue  # Used for thread-safe queue operations
 import webbrowser
+
 
 # Set the assistant's name
 ASSISTANT_NAME = "jarvis"
@@ -55,47 +57,50 @@ engine.setProperty(
 
 speak_queue = queue.Queue()  # Create a queue to hold text to be spoken
 
-for voice in engine.getProperty("voices"):
-    print(voice)
+# for voice in engine.getProperty("voices"):
+#     print(voice)
 
 
-# Function to speak the text in the queue
 def speak_text():
     global is_talking
     while True:
-        text = speak_queue.get()  # Get text from queue
-        if text is None:  # Break loop if text is None
-            break
-        is_talking = True
-        engine.say(text)  # Convert text to speech
-        engine.runAndWait()  # Wait until speech is complete
-        is_talking = False
+        try:
+            text = speak_queue.get()  # Get text from queue
+            if text is None:  # Break loop if text is None
+                break
+            is_talking = True
+            engine.say(text)  # Convert text to speech
+            engine.runAndWait()  # Wait until speech is complete
+            is_talking = False
+        except Exception as e:
+            print(f"Error in speak_text: {e}")
 
 
-# Start a new thread that will handle speaking text
-speak_thread = threading.Thread(target=speak_text, daemon=True)
-speak_thread.start()
-
-# Create a tkinter window
-window = tk.Tk()
+# Create a themed tkinter window
+window = ThemedTk(theme="radiance")
 window.title("AI Assistant")
+window.geometry("500x600")  # Set the window size
+
+# Create a frame to contain the content
+frame = ttk.Frame(window)
+frame.pack(fill="both", expand=True)
 
 # Create a label to display the assistant's name and status
-assistant_label = tk.Label(
-    window, text="My name is: " + ASSISTANT_NAME, font=("Arial", 30)
+assistant_label = ttk.Label(
+    frame, text="My name is: " + ASSISTANT_NAME, font=("Arial", 30)
 )
-assistant_label.pack(pady=20)
+assistant_label.pack(pady=25)
 
-status_label = tk.Label(window, text="🤖", font=("Arial", 150))
-status_label.pack(pady=50)
+status_label = ttk.Label(frame, text="🤖", font=("Arial", 200))
+status_label.pack(pady=30)
 
 
 # Function to update the status of the assistant
 def update_status():
     if is_assistant_active:
-        status_label.config(fg="green")
+        status_label.config(foreground="green")
     else:
-        status_label.config(fg="red")
+        status_label.config(foreground="red")
     window.update_idletasks()
 
 
@@ -121,26 +126,8 @@ def stop_assistant():
         engine.stop()
 
 
-# Create a new style
-style = ttk.Style()
-
-# Set the font
-my_font = font.Font(family="Helvetica", size=18, weight="bold")
-
-# Configure the style
-style.configure(
-    "TButton", background="red", foreground="red", font=my_font, borderwidth=0
-)
-
-# Change the padding
-style.configure("TButton", padding=(0, 5, 0, 5))
-
-# Change the label color when the button is under the cursor
-style.map(
-    "TButton", background=[("active", "dark red")], foreground=[("active", "red")]
-)
-
-stop_button = ttk.Button(window, text="Stop", style="TButton", command=stop_assistant)
+# Add a "Stop" button
+stop_button = ttk.Button(frame, text="Stop", command=stop_assistant)
 stop_button.pack(pady=10)
 
 
@@ -158,10 +145,21 @@ def process_speech_input():
             with sr.Microphone() as source:
                 audio = recognizer.listen(source)  # Listen for speech
 
-            text = recognizer.recognize_google(
-                audio, language="en-EN"
-            ).lower()  # Recognize speech and convert to lowercase
-            print(f"Corrected text: {text}")
+            results = recognizer.recognize_google(
+                audio, language="en-EN", show_all=True
+            )  # Recognize speech and convert to lowercase
+            print(f"All possible transcriptions: {results}")
+
+            # Check if the recognized results is a dictionary and contains "alternative" field
+            if isinstance(results, dict) and "alternative" in results:
+                # If yes, consider the first transcription from the list of all possible transcriptions
+                text = results["alternative"][0]["transcript"].lower()
+            # If 'results' is a list, take the first element and convert it to lowercase
+            elif isinstance(results, list):
+                text = results[0].lower()
+            # If 'results' is not a list, convert it to lowercase directly
+            else:
+                text = results.lower()
 
             # Check if the assistant's name is in the text
             if ASSISTANT_NAME in text.lower():
@@ -189,9 +187,12 @@ def process_speech_input():
                 ASSISTANT_NAME = new_name
                 assistant_label.config(text=ASSISTANT_NAME)
                 speak_queue.put(f"My name has been changed to {new_name}.")
+                conversation_history.append(
+                    {"role": "assistant", "content": f"My name is now {new_name}"}
+                )
                 continue
 
-            if "play a song" in text.lower():
+            if "music" in text.lower():
                 webbrowser.open("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
                 continue
 
@@ -229,5 +230,7 @@ def process_speech_input():
 if "__main__" == __name__:
     # Start a new thread to process speech input
     threading.Thread(target=process_speech_input, daemon=True).start()
+    # Start a new thread for text to speech conversion
+    threading.Thread(target=speak_text, daemon=True).start()
     # Start the tkinter main loop
     window.mainloop()
