@@ -10,7 +10,11 @@ import language_tool_python  # Used for grammar and spelling correction (Not use
 import threading  # Used to run multiple threads
 import queue  # Used for thread-safe queue operations
 import webbrowser
+import time
+import os
+import pyaudio
 
+p = pyaudio.PyAudio()
 
 # Set the assistant's name
 ASSISTANT_NAME = "jarvis"
@@ -141,81 +145,93 @@ def process_speech_input():
     print("Started processing speech input")
 
     while True:
+        print(is_talking)
         try:
-            with sr.Microphone() as source:
-                audio = recognizer.listen(source)  # Listen for speech
-
-            results = recognizer.recognize_google(
-                audio, language="en-EN", show_all=True
-            )  # Recognize speech and convert to lowercase
-            print(f"All possible transcriptions: {results}")
-
-            # Check if the recognized results is a dictionary and contains "alternative" field
-            if isinstance(results, dict) and "alternative" in results:
-                # If yes, consider the first transcription from the list of all possible transcriptions
-                text = results["alternative"][0]["transcript"].lower()
-            # If 'results' is a list, take the first element and convert it to lowercase
-            elif isinstance(results, list):
-                text = results[0].lower()
-            # If 'results' is not a list, convert it to lowercase directly
+            # Wait until assistant finishes speaking
+            if is_talking:
+                print("Waiting for the assistant to finish talking.")
+                time.sleep(0.1)
             else:
-                text = results.lower()
+                with sr.Microphone() as source:
+                    audio = recognizer.listen(source)  # Listen for speech
+                    print("Started listening")
 
-            # Check if the assistant's name is in the text
-            if ASSISTANT_NAME in text.lower():
-                if not is_assistant_active:  # If the assistant is not active
-                    is_assistant_active = True  # Activate the assistant
-                    print("Assistant ready to answer.")
-                    update_status()  # Update the assistant's status color
-                    speak_queue.put("Yes?")  # Speak "Yes?"
+                results = recognizer.recognize_google(
+                    audio, language="en-EN", show_all=True
+                )  # Recognize speech and convert to lowercase
+                print(f"All possible transcriptions: {results}")
+
+                # Check if the recognized results is a dictionary and contains "alternative" field
+                if isinstance(results, dict) and "alternative" in results:
+                    # If yes, consider the first transcription from the list of all possible transcriptions
+                    text = results["alternative"][0]["transcript"].lower()
+                # If 'results' is a list, take the first element and convert it to lowercase
+                elif isinstance(results, list):
+                    text = results[0].lower()
+                # If 'results' is not a list, convert it to lowercase directly
+                else:
+                    text = results.lower()
+
+                print("Finished listening")
+
+                # Check if the assistant's name is in the text
+                if ASSISTANT_NAME in text.lower():
+                    if not is_assistant_active:  # If the assistant is not active
+                        is_assistant_active = True  # Activate the assistant
+                        print("Assistant ready to answer.")
+                        update_status()  # Update the assistant's status color
+                        speak_queue.put("Yes?")  # Speak "Yes?"
+                        continue
+
+                # Check if "stop" is in the text
+                if "stop" in text.lower():
+                    if is_assistant_active:  # If the assistant is active
+                        is_assistant_active = False  # Deactivate the assistant
+                        print("Assistant deactivated.")
+                        speak_queue.put("Goodbye,")  # Speak "Goodbye,"
+                        update_status()  # Update the assistant's status color
+                        continue
+                    if engine is not None:
+                        engine.stop()
+
+                # If user wants to change the assistant's name
+                if "change your name to" in text.lower():
+                    new_name = text.split("change your name to")[-1].strip()
+                    ASSISTANT_NAME = new_name
+                    assistant_label.config(text=ASSISTANT_NAME)
+                    speak_queue.put(f"My name has been changed to {new_name}.")
+                    conversation_history.append(
+                        {"role": "assistant", "content": f"My name is now {new_name}"}
+                    )
                     continue
 
-            # Check if "stop" is in the text
-            if "stop" in text.lower():
-                if is_assistant_active:  # If the assistant is active
-                    is_assistant_active = False  # Deactivate the assistant
-                    print("Assistant deactivated.")
-                    speak_queue.put("Goodbye,")  # Speak "Goodbye,"
-                    update_status()  # Update the assistant's status color
+                if "music" in text.lower():
+                    webbrowser.open("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
                     continue
-                if engine is not None:
-                    engine.stop()
 
-            # If user wants to change the assistant's name
-            if "change your name to" in text.lower():
-                new_name = text.split("change your name to")[-1].strip()
-                ASSISTANT_NAME = new_name
-                assistant_label.config(text=ASSISTANT_NAME)
-                speak_queue.put(f"My name has been changed to {new_name}.")
-                conversation_history.append(
-                    {"role": "assistant", "content": f"My name is now {new_name}"}
-                )
-                continue
+                # If the assistant is active
+                if is_assistant_active:
+                    # Add the user's text to the conversation history
+                    conversation_history.append(
+                        {
+                            "role": "user",
+                            "content": text.split(ASSISTANT_NAME)[-1].strip(),
+                        }
+                    )
+                    # Get a response from GPT-3
+                    response = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",
+                        messages=conversation_history,
+                    )
 
-            if "music" in text.lower():
-                webbrowser.open("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-                continue
+                    # Get the assistant's reply from the response
+                    reply = response.choices[0].message["content"].strip()
+                    print(f"GPT3 responded: {reply}")
+                    # Add the assistant's reply to the conversation history
+                    conversation_history.append({"role": "assistant", "content": reply})
 
-            # If the assistant is active
-            if is_assistant_active:
-                # Add the user's text to the conversation history
-                conversation_history.append(
-                    {"role": "user", "content": text.split(ASSISTANT_NAME)[-1].strip()}
-                )
-                # Get a response from GPT-3
-                response = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",
-                    messages=conversation_history,
-                )
-
-                # Get the assistant's reply from the response
-                reply = response.choices[0].message["content"].strip()
-                print(f"GPT3 responded: {reply}")
-                # Add the assistant's reply to the conversation history
-                conversation_history.append({"role": "assistant", "content": reply})
-
-                # Add the assistant's reply to the speech queue
-                speak_queue.put(reply)
+                    # Add the assistant's reply to the speech queue
+                    speak_queue.put(reply)
 
         except sr.UnknownValueError:
             if not is_talking:
